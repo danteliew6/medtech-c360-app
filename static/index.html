@@ -11,8 +11,9 @@
     --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; --teal:#0ea5a4; --violet:#8b5cf6; --pink:#ec4899;
   }
   *{box-sizing:border-box}
-  html,body{margin:0;max-width:100%;overflow-x:hidden}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  html{scroll-behavior:smooth}
+  html,body{margin:0;max-width:100%;width:100%;overflow-x:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);-webkit-tap-highlight-color:transparent}
   header{display:flex;align-items:center;gap:12px;padding:14px 20px;width:100%;
     background:linear-gradient(90deg,#0b1428,#16203a 60%,#1a2747);border-bottom:1px solid var(--line);
     position:sticky;top:0;z-index:30}
@@ -28,18 +29,21 @@
   .kpi .v{font-size:21px;font-weight:700}
   .kpi .l{color:var(--muted);font-size:10.5px;margin-top:3px;text-transform:uppercase;letter-spacing:.4px}
   .grid{display:grid;grid-template-columns:380px 1fr;gap:18px;align-items:start}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .grid>div{min-width:0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px;min-width:0}
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 12px}
   .filterbar{display:flex;flex-direction:column;gap:9px}
-  input[type=search],select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:14px;appearance:none}
-  .selrow{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  input[type=search],select{width:100%;min-width:0;max-width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:16px;appearance:none}
+  .selrow{display:grid;grid-template-columns:1fr 1fr;gap:9px;min-width:0}
+  .selrow select{min-width:0;text-overflow:ellipsis}
   .listmeta{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:11.5px;margin:12px 2px 6px}
   .clear{color:var(--accent);cursor:pointer;font-weight:600}
   .listbox{max-height:64vh;overflow:auto;margin:0 -4px;padding:0 4px}
   .acct{padding:11px 12px;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:.12s}
   .acct:hover{background:var(--panel2)}
+  .acct:active{background:#24345c;transform:scale(.995)}
   .acct.sel{background:var(--panel2);border-color:var(--accent)}
-  .acct .n{font-weight:600;font-size:14px}
+  .acct .n{font-weight:600;font-size:14px;overflow-wrap:anywhere}
   .acct .m{color:var(--muted);font-size:12px;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .pill{font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;white-space:nowrap}
   .pill.Healthy{background:rgba(34,197,94,.16);color:#86efac}
@@ -61,6 +65,8 @@
   .mini .b .v{font-size:17px;font-weight:700}
   .mini .b .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
   .empty{color:var(--muted);text-align:center;padding:40px}
+  .spinner{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:26px auto 6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .mdr{color:#fca5a5;font-weight:700}
   /* tabs */
   .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px;overflow-x:auto}
@@ -84,13 +90,26 @@
   .wschips{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
   .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:8px}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  /* floating back-to-list button (mobile, only when a profile is open) */
+  .backbtn{display:none;align-items:center;gap:6px;position:fixed;right:14px;bottom:16px;z-index:40;
+    background:var(--accent);color:#fff;border:none;border-radius:24px;padding:12px 18px;font-weight:650;
+    font-size:14px;box-shadow:0 8px 22px rgba(0,0,0,.45);cursor:pointer}
+  .backbtn:active{transform:scale(.96)}
   @media(max-width:880px){
-    .kpis{grid-template-columns:repeat(3,1fr)}
+    .kpis{grid-template-columns:repeat(3,1fr);gap:8px}
+    .kpi{padding:11px}
+    .kpi .v{font-size:18px}
     .grid{grid-template-columns:1fr}
     .mini{grid-template-columns:repeat(2,1fr)}
     .actions{grid-template-columns:1fr}
     .listbox{max-height:none}
     header h1{font-size:15px}
+    body.has-detail .backbtn{display:inline-flex}
+  }
+  @media(max-width:430px){
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .mini{grid-template-columns:repeat(2,1fr)}
+    .wrap{padding:14px}
   }
 </style>
 </head>
@@ -129,6 +148,7 @@
     <div id="detail"><div class="card"><div class="empty">Select an account to view its 360° profile, revenue trend and recommended actions.</div></div></div>
   </div>
 </div>
+<button class="backbtn" id="backbtn">↑ Accounts</button>
 <script>
 const $=s=>document.querySelector(s);
 const usd=n=>n==null?'—':'$'+Number(n).toLocaleString();
@@ -219,7 +239,15 @@ const ICON={risk:'⚠️',watch:'👀',cross:'➕',pipe:'📈',quality:'🛡️'
 async function openAcct(id){
   selected=id;
   $('#list').querySelectorAll('.acct').forEach(e=>e.classList.toggle('sel',e.dataset.id===id));
-  const d=await j('/api/accounts/'+id);const h=d.header;
+  // instant feedback: reveal detail area + loading state before the (1-3s) warehouse query
+  const nm=document.querySelector('.acct.sel .n')?.textContent||'account';
+  document.body.classList.add('has-detail');
+  $('#detail').innerHTML=`<div class="card"><div class="spinner"></div><div class="empty" style="padding:8px 0 24px">Loading <b>${nm}</b>…</div></div>`;
+  if(window.innerWidth<=880){ requestAnimationFrame(()=>$('#detail').scrollIntoView({behavior:'smooth',block:'start'})); }
+  let d;
+  try{ d=await j('/api/accounts/'+id); }
+  catch(e){ $('#detail').innerHTML='<div class="card"><div class="empty">Could not load this account — tap another.</div></div>'; return; }
+  const h=d.header;
   const maxbu=Math.max(1,...d.by_bu.map(b=>+b.revenue));
   const buRows=d.by_bu.map(b=>`<tr><td>${b.business_unit}</td><td class="num">${usd(b.revenue)}</td>
     <td style="width:42%"><div class="bar" style="width:${Math.max(4,100*b.revenue/maxbu)}%;background:${BUCOLOR[b.business_unit]||'#3b82f6'}"></div></td></tr>`).join('')||'<tr><td colspan=3 class="empty">No orders</td></tr>';
@@ -283,6 +311,8 @@ async function openAcct(id){
   });
   wireTrend();
 }
+
+$('#backbtn').onclick=()=>{ window.scrollTo({top:0,behavior:'smooth'}); $('#search').focus({preventScroll:true}); };
 
 // wire filters
 let t;$('#search').addEventListener('input',e=>{clearTimeout(t);state.query=e.target.value;t=setTimeout(loadList,250)});
