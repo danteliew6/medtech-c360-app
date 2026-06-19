@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MedTech Customer 360</title>
+<style>
+  :root{
+    --bg:#0f1729; --panel:#16203a; --panel2:#1d2a4a; --line:#27365c;
+    --text:#e8eefc; --muted:#93a4c9; --accent:#3b82f6; --accent2:#22d3ee;
+    --good:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#101a33,#16203a);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+  header .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:18px}
+  header h1{font-size:17px;margin:0;font-weight:650}
+  header .sub{color:var(--muted);font-size:12px;margin-top:1px}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px}
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:18px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .kpi .v{font-size:22px;font-weight:700}
+  .kpi .l{color:var(--muted);font-size:11px;margin-top:3px;text-transform:uppercase;letter-spacing:.4px}
+  .grid{display:grid;grid-template-columns:360px 1fr;gap:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 12px}
+  input[type=search]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:14px}
+  .acct{padding:11px 12px;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:.12s}
+  .acct:hover{background:var(--panel2)}
+  .acct.sel{background:var(--panel2);border-color:var(--accent)}
+  .acct .n{font-weight:600;font-size:14px}
+  .acct .m{color:var(--muted);font-size:12px;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .pill{font-size:10.5px;padding:2px 8px;border-radius:20px;font-weight:600}
+  .pill.Healthy{background:rgba(34,197,94,.16);color:#86efac}
+  .pill.Watch{background:rgba(245,158,11,.16);color:#fcd34d}
+  .pill.AtRisk{background:rgba(239,68,68,.16);color:#fca5a5}
+  .pill.tier{background:rgba(59,130,246,.16);color:#93c5fd}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;border-bottom:1px solid var(--line)}
+  td{padding:8px;border-bottom:1px solid rgba(39,54,92,.5)}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .bar{height:8px;border-radius:5px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .det-head{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px}
+  .det-head .nm{font-size:20px;font-weight:700}
+  .det-head .mt{color:var(--muted);font-size:13px;margin-top:3px}
+  .mini{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+  .mini .b{background:var(--panel2);border-radius:10px;padding:10px 12px}
+  .mini .b .v{font-size:17px;font-weight:700}
+  .mini .b .l{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
+  .empty{color:var(--muted);text-align:center;padding:40px}
+  .mdr{color:#fca5a5;font-weight:700}
+  @media(max-width:860px){.kpis{grid-template-columns:repeat(3,1fr)}.grid{grid-template-columns:1fr}.mini{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🩺</div>
+  <div><h1>MedTech Customer 360</h1><div class="sub">Sales & account intelligence · medical-device manufacturer</div></div>
+</header>
+<div class="wrap">
+  <div class="kpis" id="kpis"></div>
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>Accounts</h2>
+        <input type="search" id="search" placeholder="Search hospitals, IDNs, GPOs…" />
+        <div id="list" style="margin-top:10px;max-height:70vh;overflow:auto"></div>
+      </div>
+    </div>
+    <div id="detail"><div class="card"><div class="empty">Select an account to view its 360° profile.</div></div></div>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const usd=n=>n==null?'—':'$'+Number(n).toLocaleString();
+const m=n=>n==null?'—':'$'+Number(n).toLocaleString()+'';
+const riskCls=r=>r==='At Risk'?'AtRisk':r;
+let selected=null;
+
+async function j(u){const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json();}
+
+async function loadOverview(){
+  const o=await j('/api/overview');const k=o.kpi;
+  $('#kpis').innerHTML=[
+    ['$'+k.revenue_ytd_m+'M','Net Revenue YTD'],
+    [k.accounts,'Accounts'],
+    ['$'+k.pipeline_m+'M','Open Pipeline'],
+    [k.win_rate_pct+'%','Win Rate YTD'],
+    [k.at_risk,'At-Risk Accounts'],
+    [k.open_mdr,'Open MDR Events'],
+  ].map(([v,l])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+}
+
+async function loadList(query=''){
+  const rows=await j('/api/accounts?query='+encodeURIComponent(query));
+  $('#list').innerHTML=rows.map(a=>`
+    <div class="acct ${selected===a.account_id?'sel':''}" onclick="openAcct('${a.account_id}')">
+      <div class="n">${a.account_name}</div>
+      <div class="m">
+        <span>${a.account_type} · ${a.region}</span>
+        <span class="pill tier">${a.account_tier}</span>
+        <span class="pill ${riskCls(a.churn_risk)}">${a.churn_risk}</span>
+      </div>
+      <div class="m"><span>YTD ${usd(a.revenue_ytd)}</span><span>· Pipeline ${usd(a.open_pipeline)}</span></div>
+    </div>`).join('')||'<div class="empty">No matches.</div>';
+}
+
+window.openAcct=async function(id){
+  selected=id;document.querySelectorAll('.acct').forEach(e=>e.classList.remove('sel'));
+  const d=await j('/api/accounts/'+id);const h=d.header;
+  const maxbu=Math.max(1,...d.by_bu.map(b=>+b.revenue));
+  const buRows=d.by_bu.map(b=>`<tr><td>${b.business_unit}</td><td class="num">${usd(b.revenue)}</td>
+    <td style="width:38%"><div class="bar" style="width:${Math.max(4,100*b.revenue/maxbu)}%"></div></td></tr>`).join('')||'<tr><td colspan=3 class="empty">No orders</td></tr>';
+  const ordRows=d.orders.map(o=>`<tr><td>${o.order_date}</td><td>${o.product_name}</td><td>${o.business_unit}</td>
+    <td class="num">${(+o.quantity).toLocaleString()}</td><td class="num">${usd(o.net_amount)}</td><td>${o.channel}</td></tr>`).join('')||'<tr><td colspan=6 class="empty">No orders</td></tr>';
+  const oppRows=d.opportunities.map(o=>`<tr><td>${o.stage}</td><td>${o.business_unit}</td>
+    <td class="num">${usd(o.amount)}</td><td class="num">${o.probability_pct}%</td><td>${o.expected_close_date}</td></tr>`).join('')||'<tr><td colspan=5 class="empty">No open opportunities</td></tr>';
+  const cmpRows=d.complaints.map(c=>`<tr><td>${c.date_reported}</td><td>${c.product_name}</td><td>${c.complaint_category}</td>
+    <td>${c.severity}</td><td>${c.is_mdr==='true'||c.is_mdr===true?'<span class="mdr">MDR</span>':'—'}</td><td>${c.resolution_status}</td></tr>`).join('')||'<tr><td colspan=6 class="empty">No complaints</td></tr>';
+  $('#detail').innerHTML=`
+    <div class="card">
+      <div class="det-head">
+        <div>
+          <div class="nm">${h.account_name}</div>
+          <div class="mt">${h.account_type} · ${h.segment} · ${h.city}, ${h.state} · ${h.region}</div>
+        </div>
+        <div style="text-align:right">
+          <span class="pill tier">${h.account_tier}</span>
+          <span class="pill ${riskCls(h.churn_risk)}">${h.churn_risk}</span>
+        </div>
+      </div>
+      <div class="mini">
+        <div class="b"><div class="v">${usd(h.lifetime_revenue_usd)}</div><div class="l">Lifetime Revenue</div></div>
+        <div class="b"><div class="v">${usd(h.revenue_ytd_usd)}</div><div class="l">Revenue YTD</div></div>
+        <div class="b"><div class="v">${usd(h.open_pipeline_usd)}</div><div class="l">Open Pipeline (${h.open_opps})</div></div>
+        <div class="b"><div class="v">${h.days_since_last_order??'—'}d</div><div class="l">Since Last Order</div></div>
+        <div class="b"><div class="v">${h.distinct_products}</div><div class="l">Products Bought</div></div>
+        <div class="b"><div class="v">${h.whitespace_business_units}</div><div class="l">Whitespace BUs</div></div>
+        <div class="b"><div class="v">${h.open_complaints}</div><div class="l">Open Complaints</div></div>
+        <div class="b"><div class="v ${h.mdr_complaints>0?'mdr':''}">${h.mdr_complaints}</div><div class="l">MDR Events</div></div>
+      </div>
+    </div>
+    <div class="card"><h2>Revenue by business unit</h2><table><tbody>${buRows}</tbody></table></div>
+    <div class="card"><h2>Open opportunities</h2><table><thead><tr><th>Stage</th><th>Business Unit</th><th class="num">Amount</th><th class="num">Prob</th><th>Close</th></tr></thead><tbody>${oppRows}</tbody></table></div>
+    <div class="card"><h2>Recent orders</h2><table><thead><tr><th>Date</th><th>Product</th><th>BU</th><th class="num">Qty</th><th class="num">Net</th><th>Channel</th></tr></thead><tbody>${ordRows}</tbody></table></div>
+    <div class="card"><h2>Device complaints</h2><table><thead><tr><th>Reported</th><th>Product</th><th>Category</th><th>Severity</th><th>MDR</th><th>Status</th></tr></thead><tbody>${cmpRows}</tbody></table></div>`;
+  loadList($('#search').value);
+}
+
+let t;$('#search').addEventListener('input',e=>{clearTimeout(t);t=setTimeout(()=>loadList(e.target.value),250)});
+loadOverview();loadList();
+</script>
+</body>
+</html>

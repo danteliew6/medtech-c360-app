@@ -1,0 +1,15 @@
+command:
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+env:
+  - name: CATALOG
+    value: "dante_classic_stable_catalog"
+  - name: SCHEMA
+    value: "medtech_c360"
+  - name: WAREHOUSE_ID
+    value: "114b2f7bfa1273b1"
