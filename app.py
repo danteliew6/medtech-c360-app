@@ -5,6 +5,8 @@ Dual-mode auth: injected service principal in Databricks Apps, CLI profile local
 """
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +43,26 @@ def q(sql, params=None):
     return [dict(zip(cols, row)) for row in rows]
 
 
+# Run independent queries concurrently — collapses N sequential warehouse
+# round-trips (~1s each of fixed overhead) into ~1 round-trip of wall time.
+_EXEC = ThreadPoolExecutor(max_workers=8)
+def q_many(jobs):
+    futs = {k: _EXEC.submit(q, sql, params) for k, (sql, params) in jobs.items()}
+    return {k: f.result() for k, f in futs.items()}
+
+
+# Tiny TTL cache for global, slow-changing payloads (overview KPIs, filter lists).
+_cache = {}
+def cached(key, ttl, fn):
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    val = fn()
+    _cache[key] = (now, val)
+    return val
+
+
 app = FastAPI(title="MedTech Customer 360")
 
 
@@ -51,25 +73,31 @@ def health():
 
 @app.get("/api/filters")
 def filters():
-    regions = [r["region"] for r in q("SELECT DISTINCT region FROM dim_account ORDER BY region")]
-    tiers = [r["account_tier"] for r in q("SELECT DISTINCT account_tier FROM dim_account ORDER BY account_tier")]
-    return {"regions": regions, "tiers": tiers,
-            "risks": ["Healthy", "Watch", "At Risk"], "business_units": ALL_BUS}
+    def _impl():
+        regions = [r["region"] for r in q("SELECT DISTINCT region FROM dim_account ORDER BY region")]
+        tiers = [r["account_tier"] for r in q("SELECT DISTINCT account_tier FROM dim_account ORDER BY account_tier")]
+        return {"regions": regions, "tiers": tiers,
+                "risks": ["Healthy", "Watch", "At Risk"], "business_units": ALL_BUS}
+    return cached("filters", 600, _impl)
 
 
 @app.get("/api/overview")
 def overview():
-    kpi = q("""SELECT
-      ROUND((SELECT SUM(net_amount_usd) FROM fact_orders WHERE year(order_date)=year(current_date()))/1e6,1) AS revenue_ytd_m,
-      (SELECT COUNT(*) FROM dim_account) AS accounts,
-      ROUND((SELECT SUM(amount_usd) FROM fact_opportunity WHERE is_closed=false)/1e6,1) AS pipeline_m,
-      ROUND((SELECT 100.0*COUNT_IF(is_won)/NULLIF(COUNT_IF(is_closed),0) FROM fact_opportunity WHERE year(actual_close_date)=year(current_date())),1) AS win_rate_pct,
-      (SELECT COUNT(*) FROM vw_account_360 WHERE churn_risk='At Risk') AS at_risk,
-      (SELECT COUNT(*) FROM fact_complaint WHERE is_mdr=true AND resolution_status IN ('Open','Investigating')) AS open_mdr""")[0]
-    by_bu = q("""SELECT business_unit, ROUND(SUM(net_revenue_usd),0) AS revenue
-                 FROM vw_revenue_monthly WHERE year=year(current_date())
-                 GROUP BY business_unit ORDER BY revenue DESC""")
-    return {"kpi": kpi, "by_bu": by_bu}
+    def _impl():
+        res = q_many({
+            "kpi": ("""SELECT
+              ROUND((SELECT SUM(net_amount_usd) FROM fact_orders WHERE year(order_date)=year(current_date()))/1e6,1) AS revenue_ytd_m,
+              (SELECT COUNT(*) FROM dim_account) AS accounts,
+              ROUND((SELECT SUM(amount_usd) FROM fact_opportunity WHERE is_closed=false)/1e6,1) AS pipeline_m,
+              ROUND((SELECT 100.0*COUNT_IF(is_won)/NULLIF(COUNT_IF(is_closed),0) FROM fact_opportunity WHERE year(actual_close_date)=year(current_date())),1) AS win_rate_pct,
+              (SELECT COUNT(*) FROM vw_account_360 WHERE churn_risk='At Risk') AS at_risk,
+              (SELECT COUNT(*) FROM fact_complaint WHERE is_mdr=true AND resolution_status IN ('Open','Investigating')) AS open_mdr""", None),
+            "by_bu": ("""SELECT business_unit, ROUND(SUM(net_revenue_usd),0) AS revenue
+                         FROM vw_revenue_monthly WHERE year=year(current_date())
+                         GROUP BY business_unit ORDER BY revenue DESC""", None),
+        })
+        return {"kpi": res["kpi"][0], "by_bu": res["by_bu"]}
+    return cached("overview", 120, _impl)
 
 
 @app.get("/api/accounts")
@@ -99,31 +127,37 @@ def accounts(query: str = "", region: str = "", tier: str = "", risk: str = "",
 def account_detail(account_id: str):
     if not re.match(r"^ACC-\d+$", account_id):
         raise HTTPException(400, "bad account id")
-    hdr = q("SELECT * FROM vw_account_360 WHERE account_id = :id", {"id": account_id})
+    pid = {"id": account_id}
+    res = q_many({
+        "hdr": ("SELECT * FROM vw_account_360 WHERE account_id = :id", pid),
+        "by_bu": ("""SELECT p.business_unit, ROUND(SUM(o.net_amount_usd),0) AS revenue, COUNT(*) AS lines
+                     FROM fact_orders o JOIN dim_product p USING (product_id)
+                     WHERE o.account_id = :id GROUP BY p.business_unit ORDER BY revenue DESC""", pid),
+        "trend": ("""SELECT date_format(date_trunc('MONTH', order_date),'yyyy-MM') AS ym,
+                       ROUND(SUM(net_amount_usd),0) AS revenue
+                     FROM fact_orders
+                     WHERE account_id = :id AND order_date >= add_months(date_trunc('MONTH', DATE'2026-06-18'), -17)
+                     GROUP BY 1 ORDER BY 1""", pid),
+        "orders": ("""SELECT o.order_date, p.product_name, p.business_unit, o.quantity,
+                        ROUND(o.net_amount_usd,0) AS net_amount, o.channel
+                      FROM fact_orders o JOIN dim_product p USING (product_id)
+                      WHERE o.account_id = :id ORDER BY o.order_date DESC LIMIT 20""", pid),
+        "opps": ("""SELECT stage, business_unit, ROUND(amount_usd,0) AS amount, probability_pct, expected_close_date
+                    FROM fact_opportunity WHERE account_id = :id AND is_closed=false
+                    ORDER BY amount_usd DESC LIMIT 20""", pid),
+        "complaints": ("""SELECT c.date_reported, p.product_name, c.complaint_category, c.severity,
+                            c.is_mdr, c.resolution_status
+                          FROM fact_complaint c JOIN dim_product p USING (product_id)
+                          WHERE c.account_id = :id ORDER BY c.date_reported DESC LIMIT 20""", pid),
+        "purchased": ("""SELECT DISTINCT p.business_unit FROM fact_orders o JOIN dim_product p USING (product_id)
+                         WHERE o.account_id = :id""", pid),
+    })
+    hdr = res["hdr"]
     if not hdr:
         raise HTTPException(404, "account not found")
-    by_bu = q("""SELECT p.business_unit, ROUND(SUM(o.net_amount_usd),0) AS revenue, COUNT(*) AS lines
-                 FROM fact_orders o JOIN dim_product p USING (product_id)
-                 WHERE o.account_id = :id GROUP BY p.business_unit ORDER BY revenue DESC""", {"id": account_id})
-    trend = q("""SELECT date_format(date_trunc('MONTH', order_date),'yyyy-MM') AS ym,
-                   ROUND(SUM(net_amount_usd),0) AS revenue
-                 FROM fact_orders
-                 WHERE account_id = :id AND order_date >= add_months(date_trunc('MONTH', DATE'2026-06-18'), -17)
-                 GROUP BY 1 ORDER BY 1""", {"id": account_id})
-    orders = q("""SELECT o.order_date, p.product_name, p.business_unit, o.quantity,
-                    ROUND(o.net_amount_usd,0) AS net_amount, o.channel
-                  FROM fact_orders o JOIN dim_product p USING (product_id)
-                  WHERE o.account_id = :id ORDER BY o.order_date DESC LIMIT 20""", {"id": account_id})
-    opps = q("""SELECT stage, business_unit, ROUND(amount_usd,0) AS amount, probability_pct, expected_close_date
-                FROM fact_opportunity WHERE account_id = :id AND is_closed=false
-                ORDER BY amount_usd DESC LIMIT 20""", {"id": account_id})
-    complaints = q("""SELECT c.date_reported, p.product_name, c.complaint_category, c.severity,
-                        c.is_mdr, c.resolution_status
-                      FROM fact_complaint c JOIN dim_product p USING (product_id)
-                      WHERE c.account_id = :id ORDER BY c.date_reported DESC LIMIT 20""", {"id": account_id})
-    purchased = {r["business_unit"] for r in q(
-        """SELECT DISTINCT p.business_unit FROM fact_orders o JOIN dim_product p USING (product_id)
-           WHERE o.account_id = :id""", {"id": account_id})}
+    by_bu, trend, orders = res["by_bu"], res["trend"], res["orders"]
+    opps, complaints = res["opps"], res["complaints"]
+    purchased = {r["business_unit"] for r in res["purchased"]}
     whitespace = [bu for bu in ALL_BUS if bu not in purchased]
 
     # Next-best-action recommendations (rule-based, demo-friendly)
