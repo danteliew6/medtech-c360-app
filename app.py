@@ -1,21 +1,26 @@
 """
-MedTech Customer 360 — sample Databricks App (FastAPI).
-Reads the medtech_c360 schema via the SQL warehouse (Statement Execution API).
-Dual-mode auth: injected service principal in Databricks Apps, CLI profile locally.
+MedTech Customer 360 — sample Databricks App (FastAPI), backed by Lakebase (Postgres).
+
+Reads the C360 serving layer (schema `medtech`) from a Lakebase Provisioned instance via
+psycopg, using short-lived OAuth tokens (refreshed before the 1-hour expiry) as the password.
+Thread-local connections keep the q_many() parallel fan-out fast. Dual-mode auth: injected
+service principal in Databricks Apps, CLI profile locally.
 """
 import os
 import re
 import time
+import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+import psycopg
+from psycopg.rows import dict_row
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import StatementParameterListItem
 
-CATALOG = os.environ.get("CATALOG", "dante_classic_stable_catalog")
-SCHEMA = os.environ.get("SCHEMA", "medtech_c360")
-WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "114b2f7bfa1273b1")
+INSTANCE = os.environ.get("LAKEBASE_INSTANCE", "medtech-c360-db")
+DBNAME = os.environ.get("LAKEBASE_DB", "databricks_postgres")
 IS_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))
 ALL_BUS = ["Interventional Systems", "Blood & Cell Technologies", "Cardiovascular",
            "Medical Care Solutions", "Diabetes Care"]
@@ -27,31 +32,59 @@ def w():
         _w = WorkspaceClient() if IS_APP else WorkspaceClient(profile=os.environ.get("DATABRICKS_PROFILE", "fevm-dante-classic-stable"))
     return _w
 
+# ---- connection management: cached token (refresh < 1h) + thread-local connections ----
+_host = None
+_user = None
+_token = None
+_token_ts = 0.0
+_tlock = threading.Lock()
+_tls = threading.local()
+
+def _conn_params():
+    global _host, _user, _token, _token_ts
+    with _tlock:
+        if _host is None:
+            inst = w().database.get_database_instance(name=INSTANCE)
+            _host = inst.read_write_dns
+            _user = w().current_user.me().user_name
+        if not _token or (time.time() - _token_ts) > 2700:  # refresh every 45 min
+            _token = w().database.generate_database_credential(
+                request_id=str(uuid.uuid4()), instance_names=[INSTANCE]).token
+            _token_ts = time.time()
+        return _host, _user, _token
+
+def _conn():
+    host, user, token = _conn_params()
+    c = getattr(_tls, "conn", None)
+    if c is not None and not c.closed and getattr(_tls, "tok", None) == token:
+        return c
+    if c is not None:
+        try: c.close()
+        except Exception: pass
+    c = psycopg.connect(host=host, dbname=DBNAME, user=user, password=token,
+                        sslmode="require", connect_timeout=10, autocommit=True,
+                        row_factory=dict_row)
+    _tls.conn = c
+    _tls.tok = token
+    return c
 
 def q(sql, params=None):
-    p = [StatementParameterListItem(name=k, value=str(v)) for k, v in (params or {}).items()] or None
-    r = w().statement_execution.execute_statement(
-        warehouse_id=WAREHOUSE_ID, statement=sql, catalog=CATALOG, schema=SCHEMA,
-        parameters=p, wait_timeout="30s")
-    import time
-    while r.status.state.value in ("PENDING", "RUNNING"):
-        time.sleep(1); r = w().statement_execution.get_statement(r.statement_id)
-    if r.status.state.value != "SUCCEEDED":
-        raise HTTPException(500, r.status.error.message if r.status.error else "query failed")
-    cols = [c.name for c in r.manifest.schema.columns]
-    rows = r.result.data_array or [] if r.result else []
-    return [dict(zip(cols, row)) for row in rows]
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(sql, params or {})
+            return cur.fetchall() if cur.description else []
+    except psycopg.Error as e:
+        # drop the (possibly stale) connection so the next call reconnects
+        try: _tls.conn.close()
+        except Exception: pass
+        _tls.conn = None
+        raise HTTPException(500, f"db error: {str(e)[:200]}")
 
-
-# Run independent queries concurrently — collapses N sequential warehouse
-# round-trips (~1s each of fixed overhead) into ~1 round-trip of wall time.
 _EXEC = ThreadPoolExecutor(max_workers=8)
 def q_many(jobs):
     futs = {k: _EXEC.submit(q, sql, params) for k, (sql, params) in jobs.items()}
     return {k: f.result() for k, f in futs.items()}
 
-
-# Tiny TTL cache for global, slow-changing payloads (overview KPIs, filter lists).
 _cache = {}
 def cached(key, ttl, fn):
     now = time.time()
@@ -66,16 +99,32 @@ def cached(key, ttl, fn):
 app = FastAPI(title="MedTech Customer 360")
 
 
+@app.on_event("startup")
+def _warm():
+    # open a connection on each executor thread up front so the first real
+    # request doesn't pay cold TLS/token setup across the parallel fan-out
+    try:
+        q_many({f"w{i}": ("SELECT 1 AS ok", None) for i in range(8)})
+    except Exception:
+        pass
+
+
 @app.get("/api/health")
 def health():
-    return {"ok": True, "catalog": CATALOG, "schema": SCHEMA, "mode": "app" if IS_APP else "local"}
+    backend = "lakebase"
+    try:
+        q("SELECT 1 AS ok")
+    except Exception as e:
+        return {"ok": False, "backend": backend, "error": str(e)[:200]}
+    return {"ok": True, "backend": backend, "instance": INSTANCE, "db": DBNAME,
+            "mode": "app" if IS_APP else "local"}
 
 
 @app.get("/api/filters")
 def filters():
     def _impl():
-        regions = [r["region"] for r in q("SELECT DISTINCT region FROM dim_account ORDER BY region")]
-        tiers = [r["account_tier"] for r in q("SELECT DISTINCT account_tier FROM dim_account ORDER BY account_tier")]
+        regions = [r["region"] for r in q("SELECT DISTINCT region FROM medtech.account_360 ORDER BY region")]
+        tiers = [r["account_tier"] for r in q("SELECT DISTINCT account_tier FROM medtech.account_360 ORDER BY account_tier")]
         return {"regions": regions, "tiers": tiers,
                 "risks": ["Healthy", "Watch", "At Risk"], "business_units": ALL_BUS}
     return cached("filters", 600, _impl)
@@ -86,14 +135,15 @@ def overview():
     def _impl():
         res = q_many({
             "kpi": ("""SELECT
-              ROUND((SELECT SUM(net_amount_usd) FROM fact_orders WHERE year(order_date)=year(current_date()))/1e6,1) AS revenue_ytd_m,
-              (SELECT COUNT(*) FROM dim_account) AS accounts,
-              ROUND((SELECT SUM(amount_usd) FROM fact_opportunity WHERE is_closed=false)/1e6,1) AS pipeline_m,
-              ROUND((SELECT 100.0*COUNT_IF(is_won)/NULLIF(COUNT_IF(is_closed),0) FROM fact_opportunity WHERE year(actual_close_date)=year(current_date())),1) AS win_rate_pct,
-              (SELECT COUNT(*) FROM vw_account_360 WHERE churn_risk='At Risk') AS at_risk,
-              (SELECT COUNT(*) FROM fact_complaint WHERE is_mdr=true AND resolution_status IN ('Open','Investigating')) AS open_mdr""", None),
-            "by_bu": ("""SELECT business_unit, ROUND(SUM(net_revenue_usd),0) AS revenue
-                         FROM vw_revenue_monthly WHERE year=year(current_date())
+              (round(((SELECT SUM(net_amount_usd) FROM medtech.orders WHERE order_year=2026)/1e6)::numeric,1))::float8 AS revenue_ytd_m,
+              (SELECT COUNT(*) FROM medtech.account_360) AS accounts,
+              (round(((SELECT SUM(amount_usd) FROM medtech.opportunities WHERE NOT is_closed)/1e6)::numeric,1))::float8 AS pipeline_m,
+              (SELECT (round((100.0*COUNT(*) FILTER (WHERE is_won)/NULLIF(COUNT(*) FILTER (WHERE is_closed),0))::numeric,1))::float8
+                 FROM medtech.opportunities WHERE actual_close_year=2026) AS win_rate_pct,
+              (SELECT COUNT(*) FROM medtech.account_360 WHERE churn_risk='At Risk') AS at_risk,
+              (SELECT COUNT(*) FROM medtech.complaints WHERE is_mdr AND resolution_status IN ('Open','Investigating')) AS open_mdr""", None),
+            "by_bu": ("""SELECT business_unit, round(SUM(net_amount_usd))::float8 AS revenue
+                         FROM medtech.orders WHERE order_year=2026
                          GROUP BY business_unit ORDER BY revenue DESC""", None),
         })
         return {"kpi": res["kpi"][0], "by_bu": res["by_bu"]}
@@ -106,62 +156,55 @@ def accounts(query: str = "", region: str = "", tier: str = "", risk: str = "",
     lim = max(1, min(int(limit), 200))
     preds, params = [], {}
     if query:
-        preds.append("lower(account_name) LIKE lower(:q)"); params["q"] = f"%{query}%"
+        preds.append("account_name ILIKE %(q)s"); params["q"] = f"%{query}%"
     if region:
-        preds.append("region = :region"); params["region"] = region
+        preds.append("region = %(region)s"); params["region"] = region
     if tier:
-        preds.append("account_tier = :tier"); params["tier"] = tier
+        preds.append("account_tier = %(tier)s"); params["tier"] = tier
     if risk:
-        preds.append("churn_risk = :risk"); params["risk"] = risk
+        preds.append("churn_risk = %(risk)s"); params["risk"] = risk
     where = ("WHERE " + " AND ".join(preds)) if preds else ""
     order = {"revenue": "revenue_ytd_usd DESC", "lifetime": "lifetime_revenue_usd DESC",
              "risk": "days_since_last_order DESC NULLS LAST", "pipeline": "open_pipeline_usd DESC",
              "name": "account_name ASC"}.get(sort, "revenue_ytd_usd DESC")
     return q(f"""SELECT account_id, account_name, account_type, region, account_tier, churn_risk,
-                   ROUND(revenue_ytd_usd,0) AS revenue_ytd, ROUND(open_pipeline_usd,0) AS open_pipeline,
+                   round(revenue_ytd_usd)::float8 AS revenue_ytd, round(open_pipeline_usd)::float8 AS open_pipeline,
                    days_since_last_order, open_complaints, whitespace_business_units
-                 FROM vw_account_360 {where} ORDER BY {order} LIMIT {lim}""", params)
+                 FROM medtech.account_360 {where} ORDER BY {order} LIMIT {lim}""", params)
 
 
 @app.get("/api/accounts/{account_id}")
 def account_detail(account_id: str):
     if not re.match(r"^ACC-\d+$", account_id):
         raise HTTPException(400, "bad account id")
-    pid = {"id": account_id}
+    p = {"id": account_id}
     res = q_many({
-        "hdr": ("SELECT * FROM vw_account_360 WHERE account_id = :id", pid),
-        "by_bu": ("""SELECT p.business_unit, ROUND(SUM(o.net_amount_usd),0) AS revenue, COUNT(*) AS lines
-                     FROM fact_orders o JOIN dim_product p USING (product_id)
-                     WHERE o.account_id = :id GROUP BY p.business_unit ORDER BY revenue DESC""", pid),
-        "trend": ("""SELECT date_format(date_trunc('MONTH', order_date),'yyyy-MM') AS ym,
-                       ROUND(SUM(net_amount_usd),0) AS revenue
-                     FROM fact_orders
-                     WHERE account_id = :id AND order_date >= add_months(date_trunc('MONTH', DATE'2026-06-18'), -17)
-                     GROUP BY 1 ORDER BY 1""", pid),
-        "orders": ("""SELECT o.order_date, p.product_name, p.business_unit, o.quantity,
-                        ROUND(o.net_amount_usd,0) AS net_amount, o.channel
-                      FROM fact_orders o JOIN dim_product p USING (product_id)
-                      WHERE o.account_id = :id ORDER BY o.order_date DESC LIMIT 20""", pid),
-        "opps": ("""SELECT stage, business_unit, ROUND(amount_usd,0) AS amount, probability_pct, expected_close_date
-                    FROM fact_opportunity WHERE account_id = :id AND is_closed=false
-                    ORDER BY amount_usd DESC LIMIT 20""", pid),
-        "complaints": ("""SELECT c.date_reported, p.product_name, c.complaint_category, c.severity,
-                            c.is_mdr, c.resolution_status
-                          FROM fact_complaint c JOIN dim_product p USING (product_id)
-                          WHERE c.account_id = :id ORDER BY c.date_reported DESC LIMIT 20""", pid),
-        "purchased": ("""SELECT DISTINCT p.business_unit FROM fact_orders o JOIN dim_product p USING (product_id)
-                         WHERE o.account_id = :id""", pid),
+        "hdr": ("SELECT * FROM medtech.account_360 WHERE account_id = %(id)s", p),
+        "by_bu": ("""SELECT business_unit, round(SUM(net_amount_usd))::float8 AS revenue, COUNT(*) AS lines
+                     FROM medtech.orders WHERE account_id = %(id)s GROUP BY business_unit ORDER BY revenue DESC""", p),
+        "trend": ("""SELECT to_char(order_month,'YYYY-MM') AS ym, round(SUM(net_amount_usd))::float8 AS revenue
+                     FROM medtech.orders
+                     WHERE account_id = %(id)s AND order_month >= DATE '2026-06-01' - INTERVAL '17 month'
+                     GROUP BY order_month ORDER BY order_month""", p),
+        "orders": ("""SELECT order_date, product_name, business_unit, quantity,
+                        round(net_amount_usd)::float8 AS net_amount, channel
+                      FROM medtech.orders WHERE account_id = %(id)s ORDER BY order_date DESC LIMIT 20""", p),
+        "opps": ("""SELECT stage, business_unit, round(amount_usd)::float8 AS amount, probability_pct, expected_close_date
+                    FROM medtech.opportunities WHERE account_id = %(id)s AND NOT is_closed
+                    ORDER BY amount_usd DESC LIMIT 20""", p),
+        "complaints": ("""SELECT date_reported, product_name, complaint_category, severity, is_mdr, resolution_status
+                          FROM medtech.complaints WHERE account_id = %(id)s ORDER BY date_reported DESC LIMIT 20""", p),
+        "purchased": ("SELECT DISTINCT business_unit FROM medtech.orders WHERE account_id = %(id)s", p),
     })
     hdr = res["hdr"]
     if not hdr:
         raise HTTPException(404, "account not found")
+    h = hdr[0]
     by_bu, trend, orders = res["by_bu"], res["trend"], res["orders"]
     opps, complaints = res["opps"], res["complaints"]
     purchased = {r["business_unit"] for r in res["purchased"]}
     whitespace = [bu for bu in ALL_BUS if bu not in purchased]
 
-    # Next-best-action recommendations (rule-based, demo-friendly)
-    h = hdr[0]
     actions = []
     dslo = h.get("days_since_last_order")
     dslo = int(dslo) if dslo not in (None, "") else None
