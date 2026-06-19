@@ -8,147 +8,292 @@
   :root{
     --bg:#0f1729; --panel:#16203a; --panel2:#1d2a4a; --line:#27365c;
     --text:#e8eefc; --muted:#93a4c9; --accent:#3b82f6; --accent2:#22d3ee;
-    --good:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; --teal:#0ea5a4; --violet:#8b5cf6; --pink:#ec4899;
   }
   *{box-sizing:border-box}
-  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
-  header{display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#101a33,#16203a);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
-  header .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:18px}
-  header h1{font-size:17px;margin:0;font-weight:650}
+  html,body{margin:0;max-width:100%;overflow-x:hidden}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  header{display:flex;align-items:center;gap:12px;padding:14px 20px;width:100%;
+    background:linear-gradient(90deg,#0b1428,#16203a 60%,#1a2747);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:30}
+  header .logo{width:34px;height:34px;border-radius:9px;flex:0 0 auto;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:18px}
+  header h1{font-size:16px;margin:0;font-weight:650;line-height:1.2}
   header .sub{color:var(--muted);font-size:12px;margin-top:1px}
-  .wrap{max-width:1180px;margin:0 auto;padding:20px}
-  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:18px}
-  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
-  .kpi .v{font-size:22px;font-weight:700}
-  .kpi .l{color:var(--muted);font-size:11px;margin-top:3px;text-transform:uppercase;letter-spacing:.4px}
-  .grid{display:grid;grid-template-columns:360px 1fr;gap:18px}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px}
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:16px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px;cursor:default;transition:.15s}
+  .kpi.click{cursor:pointer}
+  .kpi.click:hover{border-color:var(--accent);transform:translateY(-1px)}
+  .kpi.active{border-color:var(--bad);box-shadow:0 0 0 1px var(--bad) inset}
+  .kpi .v{font-size:21px;font-weight:700}
+  .kpi .l{color:var(--muted);font-size:10.5px;margin-top:3px;text-transform:uppercase;letter-spacing:.4px}
+  .grid{display:grid;grid-template-columns:380px 1fr;gap:18px;align-items:start}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
-  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 12px}
-  input[type=search]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:14px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:0 0 12px}
+  .filterbar{display:flex;flex-direction:column;gap:9px}
+  input[type=search],select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:14px;appearance:none}
+  .selrow{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .listmeta{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:11.5px;margin:12px 2px 6px}
+  .clear{color:var(--accent);cursor:pointer;font-weight:600}
+  .listbox{max-height:64vh;overflow:auto;margin:0 -4px;padding:0 4px}
   .acct{padding:11px 12px;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:.12s}
   .acct:hover{background:var(--panel2)}
   .acct.sel{background:var(--panel2);border-color:var(--accent)}
   .acct .n{font-weight:600;font-size:14px}
-  .acct .m{color:var(--muted);font-size:12px;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .pill{font-size:10.5px;padding:2px 8px;border-radius:20px;font-weight:600}
+  .acct .m{color:var(--muted);font-size:12px;margin-top:3px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .pill{font-size:10px;padding:2px 8px;border-radius:20px;font-weight:600;white-space:nowrap}
   .pill.Healthy{background:rgba(34,197,94,.16);color:#86efac}
   .pill.Watch{background:rgba(245,158,11,.16);color:#fcd34d}
   .pill.AtRisk{background:rgba(239,68,68,.16);color:#fca5a5}
   .pill.tier{background:rgba(59,130,246,.16);color:#93c5fd}
+  .pill.ws{background:rgba(139,92,246,.16);color:#c4b5fd}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:7px 8px;border-bottom:1px solid var(--line)}
   td{padding:8px;border-bottom:1px solid rgba(39,54,92,.5)}
   .num{text-align:right;font-variant-numeric:tabular-nums}
-  .bar{height:8px;border-radius:5px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .tablewrap{overflow-x:auto}
+  .bar{height:8px;border-radius:5px}
   .det-head{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px}
-  .det-head .nm{font-size:20px;font-weight:700}
+  .det-head .nm{font-size:21px;font-weight:700}
   .det-head .mt{color:var(--muted);font-size:13px;margin-top:3px}
-  .mini{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+  .mini{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 4px}
   .mini .b{background:var(--panel2);border-radius:10px;padding:10px 12px}
   .mini .b .v{font-size:17px;font-weight:700}
-  .mini .b .l{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
+  .mini .b .l{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.3px;margin-top:2px}
   .empty{color:var(--muted);text-align:center;padding:40px}
   .mdr{color:#fca5a5;font-weight:700}
-  @media(max-width:860px){.kpis{grid-template-columns:repeat(3,1fr)}.grid{grid-template-columns:1fr}.mini{grid-template-columns:repeat(2,1fr)}}
+  /* tabs */
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:14px;overflow-x:auto}
+  .tab{padding:9px 14px;cursor:pointer;color:var(--muted);font-size:13px;font-weight:600;border-bottom:2px solid transparent;white-space:nowrap}
+  .tab.on{color:var(--text);border-bottom-color:var(--accent)}
+  .tabpane{display:none}
+  .tabpane.on{display:block}
+  /* action cards */
+  .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .act{border-radius:11px;padding:12px 13px;border:1px solid var(--line);background:var(--panel2)}
+  .act .t{font-weight:650;font-size:13px;display:flex;align-items:center;gap:7px}
+  .act .d{color:var(--muted);font-size:12px;margin-top:4px;line-height:1.4}
+  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .risk .dot{background:var(--bad)} .watch .dot{background:var(--warn)}
+  .cross .dot{background:var(--violet)} .pipe .dot{background:var(--accent2)} .quality .dot{background:var(--pink)}
+  /* trend chart */
+  .chartwrap{position:relative}
+  svg .gridline{stroke:rgba(147,164,201,.15)}
+  svg text{fill:var(--muted);font-size:10px}
+  .tip{position:absolute;pointer-events:none;background:#0b1428;border:1px solid var(--accent);border-radius:8px;padding:6px 9px;font-size:12px;opacity:0;transition:opacity .1s;white-space:nowrap;z-index:5}
+  .wschips{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:8px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  @media(max-width:880px){
+    .kpis{grid-template-columns:repeat(3,1fr)}
+    .grid{grid-template-columns:1fr}
+    .mini{grid-template-columns:repeat(2,1fr)}
+    .actions{grid-template-columns:1fr}
+    .listbox{max-height:none}
+    header h1{font-size:15px}
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="logo">🩺</div>
-  <div><h1>MedTech Customer 360</h1><div class="sub">Sales & account intelligence · medical-device manufacturer</div></div>
+  <div><h1>MedTech Customer 360</h1><div class="sub">Sales &amp; account intelligence · medical-device manufacturer</div></div>
 </header>
 <div class="wrap">
   <div class="kpis" id="kpis"></div>
   <div class="grid">
     <div>
       <div class="card">
-        <h2>Accounts</h2>
-        <input type="search" id="search" placeholder="Search hospitals, IDNs, GPOs…" />
-        <div id="list" style="margin-top:10px;max-height:70vh;overflow:auto"></div>
+        <h2>Find accounts</h2>
+        <div class="filterbar">
+          <input type="search" id="search" placeholder="Search hospitals, IDNs, GPOs…" />
+          <div class="selrow">
+            <select id="f-region"><option value="">All regions</option></select>
+            <select id="f-tier"><option value="">All tiers</option></select>
+          </div>
+          <div class="selrow">
+            <select id="f-risk"><option value="">All risk levels</option></select>
+            <select id="f-sort">
+              <option value="revenue">Sort: Revenue YTD</option>
+              <option value="lifetime">Sort: Lifetime revenue</option>
+              <option value="pipeline">Sort: Open pipeline</option>
+              <option value="risk">Sort: Days since order</option>
+              <option value="name">Sort: Name (A–Z)</option>
+            </select>
+          </div>
+        </div>
+        <div class="listmeta"><span id="count">—</span><span class="clear" id="clear">Clear filters</span></div>
+        <div class="listbox" id="list"></div>
       </div>
     </div>
-    <div id="detail"><div class="card"><div class="empty">Select an account to view its 360° profile.</div></div></div>
+    <div id="detail"><div class="card"><div class="empty">Select an account to view its 360° profile, revenue trend and recommended actions.</div></div></div>
   </div>
 </div>
 <script>
 const $=s=>document.querySelector(s);
 const usd=n=>n==null?'—':'$'+Number(n).toLocaleString();
-const m=n=>n==null?'—':'$'+Number(n).toLocaleString()+'';
 const riskCls=r=>r==='At Risk'?'AtRisk':r;
-let selected=null;
+const BUCOLOR={'Interventional Systems':'#0ea5a4','Blood & Cell Technologies':'#f59e0b','Cardiovascular':'#ef4444','Medical Care Solutions':'#8b5cf6','Diabetes Care':'#22c55e'};
+let selected=null, detailTab='overview';
+const state={query:'',region:'',tier:'',risk:'',sort:'revenue'};
 
 async function j(u){const r=await fetch(u);if(!r.ok)throw new Error(await r.text());return r.json();}
 
-async function loadOverview(){
-  const o=await j('/api/overview');const k=o.kpi;
-  $('#kpis').innerHTML=[
-    ['$'+k.revenue_ytd_m+'M','Net Revenue YTD'],
-    [k.accounts,'Accounts'],
-    ['$'+k.pipeline_m+'M','Open Pipeline'],
-    [k.win_rate_pct+'%','Win Rate YTD'],
-    [k.at_risk,'At-Risk Accounts'],
-    [k.open_mdr,'Open MDR Events'],
-  ].map(([v,l])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+async function loadFilters(){
+  const f=await j('/api/filters');
+  const fill=(id,arr)=>{const el=$(id);arr.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;el.appendChild(o);});};
+  fill('#f-region',f.regions);fill('#f-tier',f.tiers);fill('#f-risk',f.risks);
 }
 
-async function loadList(query=''){
-  const rows=await j('/api/accounts?query='+encodeURIComponent(query));
+async function loadOverview(){
+  const o=await j('/api/overview');const k=o.kpi;
+  const cards=[
+    ['$'+k.revenue_ytd_m+'M','Net Revenue YTD','',''],
+    [k.accounts,'Accounts','',''],
+    ['$'+k.pipeline_m+'M','Open Pipeline','',''],
+    [k.win_rate_pct+'%','Win Rate YTD','',''],
+    [k.at_risk,'At-Risk Accounts','click','risk'],
+    [k.open_mdr,'Open MDR Events','',''],
+  ];
+  $('#kpis').innerHTML=cards.map(([v,l,cls,act])=>
+    `<div class="kpi ${cls} ${act==='risk'&&state.risk==='At Risk'?'active':''}" ${act?`data-act="${act}"`:''}><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+  $('#kpis').querySelectorAll('[data-act="risk"]').forEach(el=>el.onclick=()=>{
+    state.risk = state.risk==='At Risk' ? '' : 'At Risk';
+    $('#f-risk').value=state.risk; loadOverview(); loadList();
+  });
+}
+
+async function loadList(){
+  const p=new URLSearchParams(state).toString();
+  const rows=await j('/api/accounts?'+p);
+  $('#count').textContent=`${rows.length} account${rows.length===1?'':'s'}`;
   $('#list').innerHTML=rows.map(a=>`
-    <div class="acct ${selected===a.account_id?'sel':''}" onclick="openAcct('${a.account_id}')">
+    <div class="acct ${selected===a.account_id?'sel':''}" data-id="${a.account_id}">
       <div class="n">${a.account_name}</div>
       <div class="m">
         <span>${a.account_type} · ${a.region}</span>
         <span class="pill tier">${a.account_tier}</span>
         <span class="pill ${riskCls(a.churn_risk)}">${a.churn_risk}</span>
+        ${a.whitespace_business_units>0?`<span class="pill ws">${a.whitespace_business_units} whitespace</span>`:''}
       </div>
-      <div class="m"><span>YTD ${usd(a.revenue_ytd)}</span><span>· Pipeline ${usd(a.open_pipeline)}</span></div>
-    </div>`).join('')||'<div class="empty">No matches.</div>';
+      <div class="m"><span>YTD ${usd(a.revenue_ytd)}</span><span>· Pipeline ${usd(a.open_pipeline)}</span>${a.days_since_last_order!=null?`<span>· ${a.days_since_last_order}d since order</span>`:''}</div>
+    </div>`).join('')||'<div class="empty">No accounts match these filters.</div>';
+  $('#list').querySelectorAll('.acct').forEach(el=>el.onclick=()=>openAcct(el.dataset.id));
 }
 
-window.openAcct=async function(id){
-  selected=id;document.querySelectorAll('.acct').forEach(e=>e.classList.remove('sel'));
+// ---- interactive SVG revenue trend (hover tooltips) ----
+function trendChart(trend){
+  if(!trend.length) return '<div class="empty" style="padding:24px">No order history in the last 18 months.</div>';
+  const W=620,H=180,padL=44,padR=12,padT=14,padB=26, iw=W-padL-padR, ih=H-padT-padB;
+  const max=Math.max(...trend.map(t=>+t.revenue),1);
+  const n=trend.length, bw=Math.max(6,Math.min(34, iw/n*0.62));
+  const xs=i=>padL + (n===1? iw/2 : i*(iw/(n-1||1)));
+  const bx=i=> (padL + i*(iw/n) + (iw/n-bw)/2);
+  const ticks=4, gl=[...Array(ticks+1)].map((_,i)=>{
+    const v=max*i/ticks, yy=padT+ih-(v/max)*ih;
+    return `<line class="gridline" x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}"/><text x="${padL-6}" y="${yy+3}" text-anchor="end">${v>=1e6?'$'+(v/1e6).toFixed(1)+'M':'$'+Math.round(v/1e3)+'k'}</text>`;
+  }).join('');
+  const bars=trend.map((t,i)=>{
+    const h=(+t.revenue/max)*ih, yy=padT+ih-h;
+    return `<rect class="tbar" x="${bx(i).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,h).toFixed(1)}" rx="2" fill="#3b82f6" data-m="${t.ym}" data-v="${t.revenue}"/>`;
+  }).join('');
+  const pts=trend.map((t,i)=>`${(bx(i)+bw/2).toFixed(1)},${(padT+ih-(+t.revenue/max)*ih).toFixed(1)}`).join(' ');
+  const labels=trend.map((t,i)=> (i%Math.ceil(n/6)===0||i===n-1)?`<text x="${(bx(i)+bw/2).toFixed(1)}" y="${H-8}" text-anchor="middle">${t.ym.slice(2)}</text>`:'').join('');
+  return `<div class="chartwrap"><div class="tip" id="tip"></div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+      ${gl}<polyline points="${pts}" fill="none" stroke="#22d3ee" stroke-width="1.5" opacity=".7"/>${bars}${labels}
+    </svg></div>`;
+}
+function wireTrend(){
+  const tip=$('#tip'); if(!tip) return;
+  $('#detail').querySelectorAll('.tbar').forEach(b=>{
+    b.onmouseenter=e=>{b.setAttribute('fill','#22d3ee');const v=+b.dataset.v;
+      tip.innerHTML=`<b>${b.dataset.m}</b> · ${usd(v)}`;tip.style.opacity=1;};
+    b.onmousemove=e=>{const wrap=b.closest('.chartwrap').getBoundingClientRect();
+      tip.style.left=(e.clientX-wrap.left+10)+'px';tip.style.top=(e.clientY-wrap.top-6)+'px';};
+    b.onmouseleave=()=>{b.setAttribute('fill','#3b82f6');tip.style.opacity=0;};
+  });
+}
+
+const ICON={risk:'⚠️',watch:'👀',cross:'➕',pipe:'📈',quality:'🛡️'};
+async function openAcct(id){
+  selected=id;
+  $('#list').querySelectorAll('.acct').forEach(e=>e.classList.toggle('sel',e.dataset.id===id));
   const d=await j('/api/accounts/'+id);const h=d.header;
   const maxbu=Math.max(1,...d.by_bu.map(b=>+b.revenue));
   const buRows=d.by_bu.map(b=>`<tr><td>${b.business_unit}</td><td class="num">${usd(b.revenue)}</td>
-    <td style="width:38%"><div class="bar" style="width:${Math.max(4,100*b.revenue/maxbu)}%"></div></td></tr>`).join('')||'<tr><td colspan=3 class="empty">No orders</td></tr>';
+    <td style="width:42%"><div class="bar" style="width:${Math.max(4,100*b.revenue/maxbu)}%;background:${BUCOLOR[b.business_unit]||'#3b82f6'}"></div></td></tr>`).join('')||'<tr><td colspan=3 class="empty">No orders</td></tr>';
   const ordRows=d.orders.map(o=>`<tr><td>${o.order_date}</td><td>${o.product_name}</td><td>${o.business_unit}</td>
     <td class="num">${(+o.quantity).toLocaleString()}</td><td class="num">${usd(o.net_amount)}</td><td>${o.channel}</td></tr>`).join('')||'<tr><td colspan=6 class="empty">No orders</td></tr>';
   const oppRows=d.opportunities.map(o=>`<tr><td>${o.stage}</td><td>${o.business_unit}</td>
     <td class="num">${usd(o.amount)}</td><td class="num">${o.probability_pct}%</td><td>${o.expected_close_date}</td></tr>`).join('')||'<tr><td colspan=5 class="empty">No open opportunities</td></tr>';
   const cmpRows=d.complaints.map(c=>`<tr><td>${c.date_reported}</td><td>${c.product_name}</td><td>${c.complaint_category}</td>
     <td>${c.severity}</td><td>${c.is_mdr==='true'||c.is_mdr===true?'<span class="mdr">MDR</span>':'—'}</td><td>${c.resolution_status}</td></tr>`).join('')||'<tr><td colspan=6 class="empty">No complaints</td></tr>';
+  const actHtml=(d.actions||[]).map(a=>`<div class="act ${a.kind}"><div class="t"><span class="dot"></span>${ICON[a.kind]||''} ${a.title}</div><div class="d">${a.detail}</div></div>`).join('')||'<div class="empty">No actions flagged — account looks healthy.</div>';
+  const wsHtml=(d.whitespace||[]).length?`<div class="wschips">${d.whitespace.map(b=>`<span class="pill ws">${b}</span>`).join('')}</div>`:'<div class="d" style="color:var(--muted);font-size:12px">Buying across all 5 business units — fully penetrated.</div>';
+
   $('#detail').innerHTML=`
     <div class="card">
       <div class="det-head">
-        <div>
-          <div class="nm">${h.account_name}</div>
-          <div class="mt">${h.account_type} · ${h.segment} · ${h.city}, ${h.state} · ${h.region}</div>
-        </div>
+        <div><div class="nm">${h.account_name}</div>
+          <div class="mt">${h.account_type} · ${h.segment} · ${h.city}, ${h.state} · ${h.region}</div></div>
         <div style="text-align:right">
           <span class="pill tier">${h.account_tier}</span>
-          <span class="pill ${riskCls(h.churn_risk)}">${h.churn_risk}</span>
-        </div>
+          <span class="pill ${riskCls(h.churn_risk)}">${h.churn_risk}</span></div>
       </div>
       <div class="mini">
         <div class="b"><div class="v">${usd(h.lifetime_revenue_usd)}</div><div class="l">Lifetime Revenue</div></div>
         <div class="b"><div class="v">${usd(h.revenue_ytd_usd)}</div><div class="l">Revenue YTD</div></div>
         <div class="b"><div class="v">${usd(h.open_pipeline_usd)}</div><div class="l">Open Pipeline (${h.open_opps})</div></div>
-        <div class="b"><div class="v">${h.days_since_last_order??'—'}d</div><div class="l">Since Last Order</div></div>
+        <div class="b"><div class="v">${h.days_since_last_order??'—'}${h.days_since_last_order!=null?'d':''}</div><div class="l">Since Last Order</div></div>
         <div class="b"><div class="v">${h.distinct_products}</div><div class="l">Products Bought</div></div>
-        <div class="b"><div class="v">${h.whitespace_business_units}</div><div class="l">Whitespace BUs</div></div>
+        <div class="b"><div class="v">${h.business_units_purchased}/5</div><div class="l">Business Units</div></div>
         <div class="b"><div class="v">${h.open_complaints}</div><div class="l">Open Complaints</div></div>
         <div class="b"><div class="v ${h.mdr_complaints>0?'mdr':''}">${h.mdr_complaints}</div><div class="l">MDR Events</div></div>
       </div>
     </div>
-    <div class="card"><h2>Revenue by business unit</h2><table><tbody>${buRows}</tbody></table></div>
-    <div class="card"><h2>Open opportunities</h2><table><thead><tr><th>Stage</th><th>Business Unit</th><th class="num">Amount</th><th class="num">Prob</th><th>Close</th></tr></thead><tbody>${oppRows}</tbody></table></div>
-    <div class="card"><h2>Recent orders</h2><table><thead><tr><th>Date</th><th>Product</th><th>BU</th><th class="num">Qty</th><th class="num">Net</th><th>Channel</th></tr></thead><tbody>${ordRows}</tbody></table></div>
-    <div class="card"><h2>Device complaints</h2><table><thead><tr><th>Reported</th><th>Product</th><th>Category</th><th>Severity</th><th>MDR</th><th>Status</th></tr></thead><tbody>${cmpRows}</tbody></table></div>`;
-  loadList($('#search').value);
+    <div class="card">
+      <div class="tabs">
+        ${['overview','orders','pipeline','quality'].map(t=>`<div class="tab ${detailTab===t?'on':''}" data-tab="${t}">${({overview:'Overview & actions',orders:'Orders',pipeline:'Pipeline',quality:'Quality'})[t]}</div>`).join('')}
+      </div>
+      <div class="tabpane ${detailTab==='overview'?'on':''}" data-pane="overview">
+        <h2>Net revenue — last 18 months</h2>
+        ${trendChart(d.trend)}
+        <h2 style="margin-top:18px">Revenue by business unit</h2>
+        <table><tbody>${buRows}</tbody></table>
+        <h2 style="margin-top:18px">Whitespace — cross-sell opportunity</h2>
+        ${wsHtml}
+        <h2 style="margin-top:18px">Recommended next-best actions</h2>
+        <div class="actions">${actHtml}</div>
+      </div>
+      <div class="tabpane ${detailTab==='orders'?'on':''}" data-pane="orders">
+        <div class="tablewrap"><table><thead><tr><th>Date</th><th>Product</th><th>BU</th><th class="num">Qty</th><th class="num">Net</th><th>Channel</th></tr></thead><tbody>${ordRows}</tbody></table></div>
+      </div>
+      <div class="tabpane ${detailTab==='pipeline'?'on':''}" data-pane="pipeline">
+        <div class="tablewrap"><table><thead><tr><th>Stage</th><th>Business Unit</th><th class="num">Amount</th><th class="num">Prob</th><th>Close</th></tr></thead><tbody>${oppRows}</tbody></table></div>
+      </div>
+      <div class="tabpane ${detailTab==='quality'?'on':''}" data-pane="quality">
+        <div class="tablewrap"><table><thead><tr><th>Reported</th><th>Product</th><th>Category</th><th>Severity</th><th>MDR</th><th>Status</th></tr></thead><tbody>${cmpRows}</tbody></table></div>
+      </div>
+    </div>`;
+  $('#detail').querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+    detailTab=t.dataset.tab;
+    $('#detail').querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.tab===detailTab));
+    $('#detail').querySelectorAll('.tabpane').forEach(x=>x.classList.toggle('on',x.dataset.pane===detailTab));
+  });
+  wireTrend();
 }
 
-let t;$('#search').addEventListener('input',e=>{clearTimeout(t);t=setTimeout(()=>loadList(e.target.value),250)});
-loadOverview();loadList();
+// wire filters
+let t;$('#search').addEventListener('input',e=>{clearTimeout(t);state.query=e.target.value;t=setTimeout(loadList,250)});
+['f-region','f-tier','f-risk','f-sort'].forEach(id=>$('#'+id).addEventListener('change',e=>{
+  state[id.replace('f-','')]=e.target.value; loadOverview(); loadList();
+}));
+$('#clear').onclick=()=>{Object.assign(state,{query:'',region:'',tier:'',risk:'',sort:'revenue'});
+  $('#search').value='';['f-region','f-tier','f-risk'].forEach(i=>$('#'+i).value='');$('#f-sort').value='revenue';
+  loadOverview();loadList();};
+
+(async()=>{await loadFilters();await loadOverview();await loadList();})();
 </script>
 </body>
 </html>

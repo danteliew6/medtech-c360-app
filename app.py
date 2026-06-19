@@ -5,7 +5,6 @@ Dual-mode auth: injected service principal in Databricks Apps, CLI profile local
 """
 import os
 import re
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +15,8 @@ CATALOG = os.environ.get("CATALOG", "dante_classic_stable_catalog")
 SCHEMA = os.environ.get("SCHEMA", "medtech_c360")
 WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "114b2f7bfa1273b1")
 IS_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))
+ALL_BUS = ["Interventional Systems", "Blood & Cell Technologies", "Cardiovascular",
+           "Medical Care Solutions", "Diabetes Care"]
 
 _w = None
 def w():
@@ -37,13 +38,7 @@ def q(sql, params=None):
         raise HTTPException(500, r.status.error.message if r.status.error else "query failed")
     cols = [c.name for c in r.manifest.schema.columns]
     rows = r.result.data_array or [] if r.result else []
-    out = []
-    for row in rows:
-        d = {}
-        for c, v in zip(cols, row):
-            d[c] = v
-        out.append(d)
-    return out
+    return [dict(zip(cols, row)) for row in rows]
 
 
 app = FastAPI(title="MedTech Customer 360")
@@ -52,6 +47,14 @@ app = FastAPI(title="MedTech Customer 360")
 @app.get("/api/health")
 def health():
     return {"ok": True, "catalog": CATALOG, "schema": SCHEMA, "mode": "app" if IS_APP else "local"}
+
+
+@app.get("/api/filters")
+def filters():
+    regions = [r["region"] for r in q("SELECT DISTINCT region FROM dim_account ORDER BY region")]
+    tiers = [r["account_tier"] for r in q("SELECT DISTINCT account_tier FROM dim_account ORDER BY account_tier")]
+    return {"regions": regions, "tiers": tiers,
+            "risks": ["Healthy", "Watch", "At Risk"], "business_units": ALL_BUS}
 
 
 @app.get("/api/overview")
@@ -70,15 +73,26 @@ def overview():
 
 
 @app.get("/api/accounts")
-def accounts(query: str = "", limit: int = 30):
-    lim = max(1, min(int(limit), 100))
-    cols = """account_id, account_name, account_type, region, account_tier, churn_risk,
-              ROUND(revenue_ytd_usd,0) AS revenue_ytd, ROUND(open_pipeline_usd,0) AS open_pipeline,
-              days_since_last_order"""
+def accounts(query: str = "", region: str = "", tier: str = "", risk: str = "",
+             sort: str = "revenue", limit: int = 40):
+    lim = max(1, min(int(limit), 200))
+    preds, params = [], {}
     if query:
-        return q(f"""SELECT {cols} FROM vw_account_360 WHERE lower(account_name) LIKE lower(:q)
-                     ORDER BY revenue_ytd_usd DESC LIMIT {lim}""", {"q": f"%{query}%"})
-    return q(f"SELECT {cols} FROM vw_account_360 ORDER BY revenue_ytd_usd DESC LIMIT {lim}")
+        preds.append("lower(account_name) LIKE lower(:q)"); params["q"] = f"%{query}%"
+    if region:
+        preds.append("region = :region"); params["region"] = region
+    if tier:
+        preds.append("account_tier = :tier"); params["tier"] = tier
+    if risk:
+        preds.append("churn_risk = :risk"); params["risk"] = risk
+    where = ("WHERE " + " AND ".join(preds)) if preds else ""
+    order = {"revenue": "revenue_ytd_usd DESC", "lifetime": "lifetime_revenue_usd DESC",
+             "risk": "days_since_last_order DESC NULLS LAST", "pipeline": "open_pipeline_usd DESC",
+             "name": "account_name ASC"}.get(sort, "revenue_ytd_usd DESC")
+    return q(f"""SELECT account_id, account_name, account_type, region, account_tier, churn_risk,
+                   ROUND(revenue_ytd_usd,0) AS revenue_ytd, ROUND(open_pipeline_usd,0) AS open_pipeline,
+                   days_since_last_order, open_complaints, whitespace_business_units
+                 FROM vw_account_360 {where} ORDER BY {order} LIMIT {lim}""", params)
 
 
 @app.get("/api/accounts/{account_id}")
@@ -91,18 +105,53 @@ def account_detail(account_id: str):
     by_bu = q("""SELECT p.business_unit, ROUND(SUM(o.net_amount_usd),0) AS revenue, COUNT(*) AS lines
                  FROM fact_orders o JOIN dim_product p USING (product_id)
                  WHERE o.account_id = :id GROUP BY p.business_unit ORDER BY revenue DESC""", {"id": account_id})
+    trend = q("""SELECT date_format(date_trunc('MONTH', order_date),'yyyy-MM') AS ym,
+                   ROUND(SUM(net_amount_usd),0) AS revenue
+                 FROM fact_orders
+                 WHERE account_id = :id AND order_date >= add_months(date_trunc('MONTH', DATE'2026-06-18'), -17)
+                 GROUP BY 1 ORDER BY 1""", {"id": account_id})
     orders = q("""SELECT o.order_date, p.product_name, p.business_unit, o.quantity,
                     ROUND(o.net_amount_usd,0) AS net_amount, o.channel
                   FROM fact_orders o JOIN dim_product p USING (product_id)
-                  WHERE o.account_id = :id ORDER BY o.order_date DESC LIMIT 15""", {"id": account_id})
+                  WHERE o.account_id = :id ORDER BY o.order_date DESC LIMIT 20""", {"id": account_id})
     opps = q("""SELECT stage, business_unit, ROUND(amount_usd,0) AS amount, probability_pct, expected_close_date
                 FROM fact_opportunity WHERE account_id = :id AND is_closed=false
-                ORDER BY amount_usd DESC LIMIT 15""", {"id": account_id})
+                ORDER BY amount_usd DESC LIMIT 20""", {"id": account_id})
     complaints = q("""SELECT c.date_reported, p.product_name, c.complaint_category, c.severity,
                         c.is_mdr, c.resolution_status
                       FROM fact_complaint c JOIN dim_product p USING (product_id)
-                      WHERE c.account_id = :id ORDER BY c.date_reported DESC LIMIT 15""", {"id": account_id})
-    return {"header": hdr[0], "by_bu": by_bu, "orders": orders, "opportunities": opps, "complaints": complaints}
+                      WHERE c.account_id = :id ORDER BY c.date_reported DESC LIMIT 20""", {"id": account_id})
+    purchased = {r["business_unit"] for r in q(
+        """SELECT DISTINCT p.business_unit FROM fact_orders o JOIN dim_product p USING (product_id)
+           WHERE o.account_id = :id""", {"id": account_id})}
+    whitespace = [bu for bu in ALL_BUS if bu not in purchased]
+
+    # Next-best-action recommendations (rule-based, demo-friendly)
+    h = hdr[0]
+    actions = []
+    dslo = h.get("days_since_last_order")
+    dslo = int(dslo) if dslo not in (None, "") else None
+    if h.get("churn_risk") == "At Risk":
+        actions.append({"kind": "risk", "title": "Re-engage — lapsed account",
+                        "detail": f"No order in {dslo} days. Schedule a clinical business review."})
+    elif h.get("churn_risk") == "Watch":
+        actions.append({"kind": "watch", "title": "Watch — ordering is slowing",
+                        "detail": f"Last order {dslo} days ago. Confirm reorder cadence."})
+    if whitespace:
+        actions.append({"kind": "cross", "title": f"Cross-sell — {whitespace[0]}",
+                        "detail": "Whitespace business unit with no orders yet. " +
+                                  (f"+{len(whitespace)-1} more." if len(whitespace) > 1 else "Introduce the portfolio.")})
+    if float(h.get("open_pipeline_usd") or 0) > 0 and int(h.get("open_opps") or 0) > 0:
+        actions.append({"kind": "pipe", "title": "Advance open pipeline",
+                        "detail": f"{h.get('open_opps')} open opportunit{'y' if str(h.get('open_opps'))=='1' else 'ies'} worth ${float(h['open_pipeline_usd']):,.0f}."})
+    if int(h.get("open_complaints") or 0) > 0:
+        actions.append({"kind": "quality", "title": "Resolve open complaints",
+                        "detail": f"{h.get('open_complaints')} open complaint(s)" +
+                                  (f", {h.get('mdr_complaints')} MDR-reportable." if int(h.get('mdr_complaints') or 0) > 0 else ".")})
+
+    return {"header": h, "by_bu": by_bu, "trend": trend, "orders": orders,
+            "opportunities": opps, "complaints": complaints,
+            "whitespace": whitespace, "actions": actions}
 
 
 # ---- static frontend ----
