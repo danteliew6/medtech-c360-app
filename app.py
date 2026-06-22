@@ -19,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 import psycopg
 from psycopg.rows import dict_row
 from databricks.sdk import WorkspaceClient
+from pydantic import BaseModel
+from typing import Optional
 
 PROJECT = os.environ.get("LAKEBASE_PROJECT", "medtech-c360")
 BRANCH = os.environ.get("LAKEBASE_BRANCH", "production")
@@ -204,6 +206,25 @@ def account_detail(account_id: str):
         "complaints": ("""SELECT date_reported, product_name, complaint_category, severity, is_mdr, resolution_status
                           FROM medtech.complaints WHERE account_id = %(id)s ORDER BY date_reported DESC LIMIT 20""", p),
         "purchased": ("SELECT DISTINCT business_unit FROM medtech.orders WHERE account_id = %(id)s", p),
+        "logged": ("""SELECT action_id, action_type, title, detail, status, due_date,
+                        to_char(created_at,'YYYY-MM-DD') AS created_at,
+                        to_char(completed_at,'YYYY-MM-DD') AS completed_at
+                      FROM medtech.account_actions WHERE account_id = %(id)s
+                      ORDER BY status='done', created_at DESC LIMIT 50""", p),
+        "activity": ("""SELECT * FROM (
+                          SELECT order_date::text AS ts, 'order' AS kind, product_name AS label,
+                                 business_unit AS meta, round(net_amount_usd)::float8 AS amount
+                          FROM medtech.orders WHERE account_id = %(id)s
+                          UNION ALL
+                          SELECT expected_close_date::text, 'opportunity', stage, business_unit, round(amount_usd)::float8
+                          FROM medtech.opportunities WHERE account_id = %(id)s AND NOT is_closed
+                          UNION ALL
+                          SELECT date_reported::text, 'complaint', complaint_category, severity, NULL
+                          FROM medtech.complaints WHERE account_id = %(id)s
+                          UNION ALL
+                          SELECT created_at::text, 'action', title, action_type, NULL
+                          FROM medtech.account_actions WHERE account_id = %(id)s
+                        ) t WHERE ts IS NOT NULL ORDER BY ts DESC LIMIT 30""", p),
     })
     hdr = res["hdr"]
     if not hdr:
@@ -237,7 +258,58 @@ def account_detail(account_id: str):
 
     return {"header": h, "by_bu": by_bu, "trend": trend, "orders": orders,
             "opportunities": opps, "complaints": complaints,
-            "whitespace": whitespace, "actions": actions}
+            "whitespace": whitespace, "actions": actions,
+            "logged_actions": res["logged"], "activity": res["activity"]}
+
+
+# ---- write-back: rep actions persisted to Lakebase (the app does OLTP, not just reads) ----
+class ActionIn(BaseModel):
+    action_type: str = "note"
+    title: str
+    detail: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+@app.post("/api/accounts/{account_id}/actions")
+def create_action(account_id: str, body: ActionIn):
+    if not re.match(r"^ACC-\d+$", account_id):
+        raise HTTPException(400, "bad account id")
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(400, "title required")
+    who = "app" if IS_APP else (w().current_user.me().user_name or "local")
+    row = q("""INSERT INTO medtech.account_actions
+                 (account_id, action_type, title, detail, due_date, created_by)
+               VALUES (%(a)s, %(t)s, %(ti)s, %(d)s, %(due)s, %(by)s)
+               RETURNING action_id, action_type, title, detail, status, due_date,
+                         to_char(created_at,'YYYY-MM-DD') AS created_at""",
+            {"a": account_id, "t": body.action_type[:40], "ti": title[:200],
+             "d": (body.detail or None), "due": (body.due_date or None), "by": who[:120]})
+    return row[0] if row else {}
+
+
+@app.post("/api/actions/{action_id}/toggle")
+def toggle_action(action_id: int):
+    row = q("""UPDATE medtech.account_actions
+               SET status = CASE WHEN status='open' THEN 'done' ELSE 'open' END,
+                   completed_at = CASE WHEN status='open' THEN now() ELSE NULL END
+               WHERE action_id = %(id)s
+               RETURNING action_id, status""", {"id": int(action_id)})
+    if not row:
+        raise HTTPException(404, "action not found")
+    return row[0]
+
+
+@app.get("/api/actions")
+def list_actions(status: str = "open", limit: int = 100):
+    lim = max(1, min(int(limit), 500))
+    where = "WHERE a.status = %(s)s" if status in ("open", "done") else ""
+    params = {"s": status} if where else {}
+    return q(f"""SELECT a.action_id, a.account_id, ac.account_name, a.action_type, a.title,
+                   a.detail, a.status, a.due_date, to_char(a.created_at,'YYYY-MM-DD') AS created_at
+                 FROM medtech.account_actions a
+                 JOIN medtech.account_360 ac USING (account_id)
+                 {where} ORDER BY a.created_at DESC LIMIT {lim}""", params)
 
 
 # ---- static frontend ----
