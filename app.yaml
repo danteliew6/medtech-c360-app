@@ -7,7 +7,9 @@ command:
   - "8000"
 
 env:
-  - name: LAKEBASE_INSTANCE
-    value: "medtech-c360-db"
+  - name: LAKEBASE_PROJECT
+    value: "medtech-c360"
+  - name: LAKEBASE_BRANCH
+    value: "production"
   - name: LAKEBASE_DB
     value: "databricks_postgres"

@@ -1,4 +1,4 @@
 fastapi
 uvicorn[standard]
-databricks-sdk>=0.81
+databricks-sdk>=0.118
 psycopg[binary]>=3.1

@@ -1,8 +1,10 @@
 """
-MedTech Customer 360 — sample Databricks App (FastAPI), backed by Lakebase (Postgres).
+MedTech Customer 360 — sample Databricks App (FastAPI), backed by Lakebase Autoscaling.
 
-Reads the C360 serving layer (schema `medtech`) from a Lakebase Provisioned instance via
+Reads the C360 serving layer (schema `medtech`) from a Lakebase Autoscaling project via
 psycopg, using short-lived OAuth tokens (refreshed before the 1-hour expiry) as the password.
+The Autoscaling endpoint scales to zero after 5 min idle and wakes on the next connection;
+q() retries transparently so the first request after idle just pays a short wake penalty.
 Thread-local connections keep the q_many() parallel fan-out fast. Dual-mode auth: injected
 service principal in Databricks Apps, CLI profile locally.
 """
@@ -10,7 +12,6 @@ import os
 import re
 import time
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -19,7 +20,9 @@ import psycopg
 from psycopg.rows import dict_row
 from databricks.sdk import WorkspaceClient
 
-INSTANCE = os.environ.get("LAKEBASE_INSTANCE", "medtech-c360-db")
+PROJECT = os.environ.get("LAKEBASE_PROJECT", "medtech-c360")
+BRANCH = os.environ.get("LAKEBASE_BRANCH", "production")
+ENDPOINT = f"projects/{PROJECT}/branches/{BRANCH}/endpoints/primary"
 DBNAME = os.environ.get("LAKEBASE_DB", "databricks_postgres")
 IS_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))
 ALL_BUS = ["Interventional Systems", "Blood & Cell Technologies", "Cardiovascular",
@@ -44,12 +47,11 @@ def _conn_params():
     global _host, _user, _token, _token_ts
     with _tlock:
         if _host is None:
-            inst = w().database.get_database_instance(name=INSTANCE)
-            _host = inst.read_write_dns
+            ep = w().postgres.get_endpoint(name=ENDPOINT)
+            _host = ep.status.hosts.host
             _user = w().current_user.me().user_name
         if not _token or (time.time() - _token_ts) > 2700:  # refresh every 45 min
-            _token = w().database.generate_database_credential(
-                request_id=str(uuid.uuid4()), instance_names=[INSTANCE]).token
+            _token = w().postgres.generate_database_credential(endpoint=ENDPOINT).token
             _token_ts = time.time()
         return _host, _user, _token
 
@@ -61,24 +63,31 @@ def _conn():
     if c is not None:
         try: c.close()
         except Exception: pass
+    # connect_timeout high enough to absorb a scale-to-zero wake (~2-5s)
     c = psycopg.connect(host=host, dbname=DBNAME, user=user, password=token,
-                        sslmode="require", connect_timeout=10, autocommit=True,
+                        sslmode="require", connect_timeout=30, autocommit=True,
                         row_factory=dict_row)
     _tls.conn = c
     _tls.tok = token
     return c
 
 def q(sql, params=None):
-    try:
-        with _conn().cursor() as cur:
-            cur.execute(sql, params or {})
-            return cur.fetchall() if cur.description else []
-    except psycopg.Error as e:
-        # drop the (possibly stale) connection so the next call reconnects
-        try: _tls.conn.close()
-        except Exception: pass
-        _tls.conn = None
-        raise HTTPException(500, f"db error: {str(e)[:200]}")
+    # retry-on-wake: the autoscale endpoint may be asleep or drop a stale conn;
+    # the first attempt triggers the wake, the retry runs once it's up.
+    last = None
+    for attempt in range(3):
+        try:
+            with _conn().cursor() as cur:
+                cur.execute(sql, params or {})
+                return cur.fetchall() if cur.description else []
+        except psycopg.Error as e:
+            last = e
+            try: _tls.conn.close()
+            except Exception: pass
+            _tls.conn = None
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))  # brief backoff while the DB wakes
+    raise HTTPException(500, f"db error: {str(last)[:200]}")
 
 _EXEC = ThreadPoolExecutor(max_workers=8)
 def q_many(jobs):
@@ -116,7 +125,7 @@ def health():
         q("SELECT 1 AS ok")
     except Exception as e:
         return {"ok": False, "backend": backend, "error": str(e)[:200]}
-    return {"ok": True, "backend": backend, "instance": INSTANCE, "db": DBNAME,
+    return {"ok": True, "backend": backend, "project": PROJECT, "db": DBNAME,
             "mode": "app" if IS_APP else "local"}
 
 
